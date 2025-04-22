@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dlclim"
+version = "0.0.1"
+authors =[
+    {name="Florian Gallusser", email="florian.gallusser@uni-wuerzburg.de"},
+]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3"
+]
+
+
+[tool.setuptools.packages.find]
+where = ["src"]

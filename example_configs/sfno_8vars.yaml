@@ -1,0 +1,164 @@
+seed_everything: 1234
+
+# ---------------------------- TRAINER -------------------------------------------
+trainer:
+  default_root_dir: "${oc.env:RESULTS_DIR}/${oc.env:EXP_DIR}"
+  precision: 32
+  log_every_n_steps: 50
+  num_nodes: 1
+  accelerator: cpu
+  # strategy:
+  #   class_path: pytorch_lightning.strategies.DDPStrategy
+  #   init_args:
+  #     find_unused_parameters: True
+
+  min_epochs: 1
+  max_epochs: 2
+  gradient_clip_val: 0.001
+  accumulate_grad_batches: 1
+  enable_progress_bar: true
+  max_time: 00:23:30:00
+  sync_batchnorm: True
+  enable_checkpointing: True
+ 
+
+  # debugging
+  # fast_dev_run: True
+   # detect_anomaly: True
+
+  logger:
+    class_path: pytorch_lightning.loggers.wandb.WandbLogger
+    init_args:
+      save_dir: ${trainer.default_root_dir}
+      name: "${oc.env:RUN_NAME}"
+      project: "dummy_project"
+      offline: False
+      log_model: False
+
+  callbacks:
+    - class_path: pytorch_lightning.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: "step"
+
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: "${trainer.default_root_dir}/checkpoints"
+        monitor: "val_agg_norm_mse" # name of the logged metric which determines when model is improving
+        mode: "min" # "max" means higher metric value is better, can be also "min"
+        save_top_k: 1 # save k best models (determined by above metric)
+        save_last: True # additionaly always save model from last epoch
+        verbose: True
+        filename: "best_epoch_{epoch:03d}"
+        auto_insert_metric_name: False
+
+    - class_path: pytorch_lightning.callbacks.EarlyStopping
+      init_args:
+        monitor: "val_agg_norm_mse" # name of the logged metric which determines when model is improving
+        mode: "min" # "max" means higher metric value is better, can be also "min"
+        patience: 5 # how many validation epochs of not improving until training stops
+        min_delta: 0. # minimum change in the monitored metric needed to qualify as an improvement
+
+    - class_path: pytorch_lightning.callbacks.RichModelSummary
+      init_args:
+        max_depth: -1
+
+    - class_path: pytorch_lightning.callbacks.RichProgressBar
+    
+# ---------------------------- DATA -------------------------------------------
+data:
+  data_dirs: 
+    - 'ERA5/weatherbench1/r64x32/2m_temperature/'
+    - 'ERA5/weatherbench1/r64x32/10m_u_component_of_wind/'
+    - 'ERA5/weatherbench1/r64x32/10m_v_component_of_wind/'
+    - 'ERA5/weatherbench1/r64x32/geopotential/'
+    - 'ERA5/weatherbench1/r64x32/temperature/'
+    - 'ERA5/weatherbench1/r64x32/constants/'
+    - 'CMIP/CMIP6/inputs4MIP/historical/solar/r64x32/1hr/tisr/'
+  normalization_dirs:
+    - 'ERA5/weatherbench1/r64x32/2m_temperature/normalization/1979_2008/'
+    - 'ERA5/weatherbench1/r64x32/10m_u_component_of_wind/normalization/1979_2008/'
+    - 'ERA5/weatherbench1/r64x32/10m_v_component_of_wind/normalization/1979_2008/'
+    - 'ERA5/weatherbench1/r64x32/constants/normalization/1979_2008/'
+    - 'ERA5/weatherbench1/r64x32/geopotential/normalization/1979_2008/'
+    - 'ERA5/weatherbench1/r64x32/temperature/normalization/1979_2008/'
+    - 'CMIP/CMIP6/inputs4MIP/historical/solar/r64x32/1hr/tisr/normalization/1979_2008/'
+  train_config: &train_config
+    start_date: '2009-01-01T00'
+    end_date: '2009-02-01T00'
+    init_dates: '6h'
+    forcing_vars: &forcing_vars
+      'tisr': []
+    prognostic_vars: &prognostic_vars
+      'tas': []
+      'uas': []
+      'vas': []
+      'ta': [850]
+      'zg': [300, 500 , 700, 1000]
+    constant_vars: &constant_vars
+      'orography': []
+      'lsm': []
+      'lat2d': []
+      'lon2d': []
+    diagnostic_vars: &diagnostic_vars
+      {}
+    lead_time: "6h" 
+    n_steps: 2
+    buffer_size: 32000
+    shuffle_dataset: True
+    init_condition_only: False
+    compute_lead_times: False
+    noise: 0.0
+  val_config:
+    start_date: '2009-02-01T00'
+    end_date: '2009-03-01T00'
+    shuffle_dataset: False
+    noise: 0.0
+  test_config:
+    start_date: '2009-03-01T00'
+    end_date: '2009-04-01T00'
+    shuffle_dataset: False
+    noise: 0.0
+  batch_size: 16
+  num_workers: 1
+  pin_memory: False
+
+
+  # ---------------------------- MODEL -------------------------------------------
+model:
+  pretrained_path: Null
+  optimizer: Adam
+  optimizer_args:
+    lr: 0.001
+  schedule: 'cosine'
+  schedule_args:
+    T_max: ${trainer.max_epochs}
+  metrics_module:
+    class_path: metrics.MetricsModule
+    init_args:
+      train_metrics:
+        'mse': 1
+      eval_metrics: ["rmse", "mse"]
+      area_weighted: True
+
+  net:
+    class_path: models.sfno.SFNO2DModule
+    init_args:
+      default_in_vars:
+        <<: [*constant_vars, *forcing_vars, *prognostic_vars]
+      default_out_vars:
+        <<: [*prognostic_vars, *diagnostic_vars]
+      predict_residuals: True 
+      lead_time: ${data.train_config.lead_time}
+      grid: "equiangular"  # any of "equiangular", "lobatto", "legendre-gauss"
+      scale_factor: 1
+      embed_dim: 128
+      num_layers: 4
+      rank: 1
+      height: 32
+      width: 64
+      hard_thresholding_fraction: 1.0
+      factorization: Null
+      big_skip: False
+      pos_embed: False
+      use_mlp: True
+      normalization_layer: none
